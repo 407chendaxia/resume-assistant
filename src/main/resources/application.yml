@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: resume-assistant
+
+# LangChain4j 配置 (使用 DeepSeek，兼容 OpenAI 协议)
+langchain4j:
+  open-ai:
+    chat-model:
+      api-key: ${api-key}
+      base-url: https://api.deepseek.com
+      model-name: deepseek-v4-pro
+      temperature: 0.7
+      max-tokens: 2000
+      log-requests: true
+      log-responses: true
+    streaming-chat-model:
+      api-key: ${api-key}
+      base-url: https://api.deepseek.com
+      model-name: deepseek-v4-pro
+      temperature: 0.7
+      max-tokens: 2000
+      log-requests: true
+      log-responses: true

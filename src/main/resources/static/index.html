@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>简历助手 - AI 简历优化</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #f7f8fa;
+            --panel-bg: #fff;
+            --accent: #4f46e5;
+            --accent-hover: #4338ca;
+            --text: #1e293b;
+            --text-secondary: #64748b;
+            --border: #e2e8f0;
+            --user-bubble: #eef2ff;
+            --ai-bubble: #fff;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        header {
+            background: var(--accent);
+            color: #fff;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(79,70,229,0.2);
+            z-index: 10;
+        }
+        header h1 { font-size: 1.2rem; font-weight: 600; }
+        header .sub { font-size: 0.85rem; opacity: 0.85; }
+
+        main { flex: 1; display: flex; overflow: hidden; }
+
+        /* ── Sidebar ── */
+        .sidebar {
+            width: 340px;
+            background: var(--panel-bg);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            gap: 16px;
+            overflow-y: auto;
+        }
+        .sidebar h2 { font-size: 1rem; font-weight: 600; }
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 32px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            color: var(--text-secondary);
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: #eef2ff;
+        }
+        .upload-zone .icon { font-size: 2rem; margin-bottom: 8px; }
+        .upload-zone .hint { font-size: 0.8rem; }
+        .upload-zone input { display: none; }
+        .upload-zone.uploading {
+            pointer-events: none;
+            opacity: 0.6;
+        }
+
+        #sessionInfo {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            padding: 12px;
+            background: #f1f5f9;
+            border-radius: 8px;
+            word-break: break-all;
+            display: none;
+        }
+        #sessionInfo .label { font-weight: 600; color: var(--text); }
+
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .btn-primary { background: var(--accent); color: #fff; }
+        .btn-primary:hover { background: var(--accent-hover); }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .btn-outline:hover { background: #f1f5f9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .sidebar-buttons { display: flex; gap: 8px; }
+
+        /* ── Chat Area ── */
+        .chat-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg);
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .chat-messages .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            gap: 12px;
+        }
+        .chat-messages .empty-state .icon { font-size: 3rem; }
+
+        .message {
+            max-width: 85%;
+            padding: 14px 18px;
+            border-radius: 12px;
+            line-height: 1.65;
+            font-size: 0.92rem;
+            animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        .message.user {
+            align-self: flex-end;
+            background: var(--user-bubble);
+            border-bottom-right-radius: 4px;
+            box-shadow: var(--shadow);
+        }
+        .message.ai {
+            align-self: flex-start;
+            background: var(--ai-bubble);
+            border-bottom-left-radius: 4px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border);
+        }
+        .message.ai.streaming::after {
+            content: '▊';
+            animation: blink 1s step-end infinite;
+            margin-left: 2px;
+            color: var(--accent);
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        .message.status {
+            align-self: center;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            padding: 8px 16px;
+            box-shadow: none;
+            border: none;
+        }
+
+        .message.ai h1, .message.ai h2, .message.ai h3 { font-size: 1rem; margin: 8px 0 4px; }
+        .message.ai p { margin: 4px 0; }
+        .message.ai ul, .message.ai ol { padding-left: 20px; margin: 4px 0; }
+        .message.ai code {
+            background: #f1f5f9;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        .message.ai pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        .message.ai pre code { background: none; padding: 0; color: inherit; }
+        .message.ai blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 12px;
+            color: var(--text-secondary);
+            margin: 8px 0;
+        }
+        .message.ai strong { color: var(--accent); }
+
+        /* ── Input Area ── */
+        .chat-input-area {
+            padding: 16px 24px;
+            background: var(--panel-bg);
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 12px;
+        }
+        .chat-input-area textarea {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            resize: none;
+            font-size: 0.92rem;
+            font-family: inherit;
+            outline: none;
+            transition: border 0.2s;
+            max-height: 120px;
+            line-height: 1.5;
+        }
+        .chat-input-area textarea:focus { border-color: var(--accent); }
+        .chat-input-area .send-btn {
+            width: 48px;
+            height: 48px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div>
+        <h1>📋 简历助手</h1>
+        <span class="sub">AI 驱动的简历优化 Agent</span>
+    </div>
+</header>
+
+<main>
+    <aside class="sidebar">
+        <h2>📄 上传简历</h2>
+        <div class="upload-zone" id="uploadZone">
+            <div class="icon">📁</div>
+            <div>拖拽文件到此处，或点击选择</div>
+            <div class="hint">支持 PDF / Word / Markdown</div>
+            <input type="file" id="fileInput" accept=".pdf,.docx,.md,.txt,.markdown">
+        </div>
+        <div id="sessionInfo">
+            <div><span class="label">会话ID：</span><span id="sid"></span></div>
+            <div><span class="label">文件：</span><span id="fname"></span></div>
+        </div>
+        <!-- 模板选择 -->
+        <div>
+            <label style="font-size:0.85rem;font-weight:600;display:block;margin-bottom:6px;">📋 简历模板</label>
+            <select id="templateSelect" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:0.9rem;background:#fff;">
+                <option value="tech">技术研发岗</option>
+                <option value="product">产品/管理岗</option>
+                <option value="entry">应届生/初级岗</option>
+            </select>
+        </div>
+
+        <div class="sidebar-buttons" style="flex-wrap:wrap;">
+            <button class="btn btn-outline" id="exportMdBtn" disabled>📥 导出 MD</button>
+            <button class="btn btn-outline" id="exportOptimizedBtn" disabled>✨ 优化版</button>
+            <button class="btn btn-outline" id="exportPdfBtn" disabled>📄 导出 PDF</button>
+            <button class="btn btn-outline" id="clearBtn" disabled>🗑 清空</button>
+        </div>
+    </aside>
+
+    <section class="chat-area">
+        <div class="chat-messages" id="chatMessages">
+            <div class="empty-state">
+                <div class="icon">🤖</div>
+                <div>上传简历后，AI 将自动诊断并给出优化建议</div>
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <textarea id="chatInput" rows="1" placeholder="输入优化指令..." disabled></textarea>
+            <button class="btn btn-primary send-btn" id="sendBtn" disabled>➤</button>
+        </div>
+    </section>
+</main>
+
+<script>
+    // ═══════════════════════════════════════
+    //  State
+    // ═══════════════════════════════════════
+    let currentSessionId = null;
+    let currentAiBubble = null;      // 正在流式写入的 AI 消息气泡
+    let currentAiRawText = '';       // 累积的原始文本
+
+    const uploadZone = document.getElementById('uploadZone');
+    const fileInput = document.getElementById('fileInput');
+    const sessionInfo = document.getElementById('sessionInfo');
+    const sidEl = document.getElementById('sid');
+    const fnameEl = document.getElementById('fname');
+    const exportMdBtn = document.getElementById('exportMdBtn');
+    const exportOptimizedBtn = document.getElementById('exportOptimizedBtn');
+    const exportPdfBtn = document.getElementById('exportPdfBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const templateSelect = document.getElementById('templateSelect');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const sendBtn = document.getElementById('sendBtn');
+
+    // ═══════════════════════════════════════
+    //  Upload
+    // ═══════════════════════════════════════
+    uploadZone.addEventListener('click', () => { if (!uploadZone.classList.contains('uploading')) fileInput.click(); });
+    uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+    uploadZone.addEventListener('drop', e => {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file) handleUpload(file);
+    });
+    fileInput.addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (file) handleUpload(file);
+    });
+
+    async function handleUpload(file) {
+        uploadZone.classList.add('uploading');
+        addStatusMessage('📄 正在解析简历...');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/resume/upload', {
+                method: 'POST',
+                body: formData,
+                headers: { 'Accept': 'text/event-stream' }
+            });
+
+            await parseSSEStream(response, (eventType, data) => {
+                switch (eventType) {
+                    case 'status':
+                        updateLastStatus(data);
+                        break;
+                    case 'meta':
+                        // 收到元信息 → 开启对话能力
+                        try {
+                            const meta = JSON.parse(data);
+                            currentSessionId = meta.sessionId;
+                            sidEl.textContent = meta.sessionId.substring(0, 8) + '...';
+                            fnameEl.textContent = meta.fileName;
+                            sessionInfo.style.display = 'block';
+                            chatInput.disabled = false;
+                            sendBtn.disabled = false;
+                            exportMdBtn.disabled = false;
+                            exportOptimizedBtn.disabled = false;
+                            exportPdfBtn.disabled = false;
+                            clearBtn.disabled = false;
+                            chatInput.placeholder = '输入优化指令，如：帮我优化工作经历部分...';
+                        } catch(e) { /* ignore parse error */ }
+                        break;
+                    case 'token':
+                        // 逐字追加到当前 AI 气泡
+                        removeLastStatus();
+                        appendTokenToAiBubble(data);
+                        break;
+                    case 'done':
+                        // 流式结束 → 渲染 Markdown
+                        finalizeAiBubble();
+                        chatInput.focus();
+                        break;
+                    case 'error':
+                        removeLastStatus();
+                        addAIMessage('❌ ' + data);
+                        finalizeAiBubble();
+                        break;
+                }
+            });
+
+        } catch (err) {
+            removeLastStatus();
+            addAIMessage('❌ 上传失败: ' + err.message);
+        } finally {
+            uploadZone.classList.remove('uploading');
+        }
+    }
+
+    // ═══════════════════════════════════════
+    //  Chat
+    // ═══════════════════════════════════════
+    sendBtn.addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+    chatInput.addEventListener('input', () => {
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+    });
+
+    async function sendMessage() {
+        const message = chatInput.value.trim();
+        if (!message || !currentSessionId) return;
+
+        addUserMessage(message);
+        chatInput.value = '';
+        chatInput.style.height = 'auto';
+        chatInput.disabled = true;
+        sendBtn.disabled = true;
+        addStatusMessage('💬 正在思考...');
+
+        try {
+            const response = await fetch('/api/resume/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                body: JSON.stringify({ sessionId: currentSessionId, message })
+            });
+
+            await parseSSEStream(response, (eventType, data) => {
+                switch (eventType) {
+                    case 'status':
+                        updateLastStatus(data);
+                        break;
+                    case 'token':
+                        removeLastStatus();
+                        appendTokenToAiBubble(data);
+                        break;
+                    case 'done':
+                        finalizeAiBubble();
+                        chatInput.disabled = false;
+                        sendBtn.disabled = false;
+                        chatInput.focus();
+                        break;
+                    case 'error':
+                        removeLastStatus();
+                        addAIMessage('❌ ' + data);
+                        finalizeAiBubble();
+                        chatInput.disabled = false;
+                        sendBtn.disabled = false;
+                        break;
+                }
+            });
+
+        } catch (err) {
+            removeLastStatus();
+            addAIMessage('❌ 请求失败: ' + err.message);
+            chatInput.disabled = false;
+            sendBtn.disabled = false;
+        }
+    }
+
+    // ═══════════════════════════════════════
+    //  SSE Stream Parser
+    // ═══════════════════════════════════════
+    async function parseSSEStream(response, callback) {
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentEvent = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    currentEvent = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    const data = line.slice(5).trim();
+                    callback(currentEvent, data);
+                    currentEvent = '';
+                }
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════
+    //  UI Helpers
+    // ═══════════════════════════════════════
+    function addUserMessage(text) {
+        removeEmptyState();
+        const div = document.createElement('div');
+        div.className = 'message user';
+        div.textContent = text;
+        chatMessages.appendChild(div);
+        scrollToBottom();
+    }
+
+    function addAIMessage(markdown) {
+        removeEmptyState();
+        const div = document.createElement('div');
+        div.className = 'message ai';
+        div.innerHTML = marked.parse(markdown);
+        chatMessages.appendChild(div);
+        scrollToBottom();
+    }
+
+    /** 创建或追加 AI 气泡（流式写入中） */
+    function appendTokenToAiBubble(token) {
+        removeEmptyState();
+        if (!currentAiBubble) {
+            currentAiBubble = document.createElement('div');
+            currentAiBubble.className = 'message ai streaming';
+            chatMessages.appendChild(currentAiBubble);
+            currentAiRawText = '';
+        }
+        currentAiRawText += token;
+        // 流式过程中直接显示原始文本（Markdown 在 done 时渲染）
+        currentAiBubble.textContent = currentAiRawText;
+        scrollToBottom();
+    }
+
+    /** 流式结束 → Markdown 渲染 */
+    function finalizeAiBubble() {
+        if (currentAiBubble) {
+            currentAiBubble.classList.remove('streaming');
+            currentAiBubble.innerHTML = marked.parse(currentAiRawText);
+            currentAiBubble = null;
+            currentAiRawText = '';
+        }
+    }
+
+    function addStatusMessage(text) {
+        removeEmptyState();
+        const div = document.createElement('div');
+        div.className = 'message status';
+        div.id = 'statusMsg';
+        div.textContent = text;
+        chatMessages.appendChild(div);
+        scrollToBottom();
+    }
+
+    function updateLastStatus(text) {
+        const el = document.getElementById('statusMsg');
+        if (el) el.textContent = text;
+    }
+
+    function removeLastStatus() {
+        const el = document.getElementById('statusMsg');
+        if (el) el.remove();
+    }
+
+    function removeEmptyState() {
+        const empty = chatMessages.querySelector('.empty-state');
+        if (empty) empty.remove();
+    }
+
+    function scrollToBottom() {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    // ═══════════════════════════════════════
+    //  Sidebar Buttons
+    // ═══════════════════════════════════════
+    exportMdBtn.addEventListener('click', () => {
+        if (currentSessionId) window.open('/api/resume/export/' + currentSessionId, '_blank');
+    });
+
+    exportOptimizedBtn.addEventListener('click', () => {
+        if (currentSessionId) {
+            const t = templateSelect.value;
+            window.open('/api/resume/export/optimized/' + currentSessionId + '?template=' + t, '_blank');
+        }
+    });
+
+    exportPdfBtn.addEventListener('click', () => {
+        if (currentSessionId) {
+            const t = templateSelect.value;
+            window.open('/api/resume/export/pdf/' + currentSessionId + '?template=' + t, '_blank');
+        }
+    });
+
+    clearBtn.addEventListener('click', async () => {
+        if (!currentSessionId) return;
+        if (!confirm('确定要清空当前会话吗？')) return;
+
+        await fetch('/api/resume/session/' + currentSessionId, { method: 'DELETE' });
+        currentSessionId = null;
+        sessionInfo.style.display = 'none';
+        chatMessages.innerHTML = `
+            <div class="empty-state">
+                <div class="icon">🤖</div>
+                <div>上传简历后，AI 将自动诊断并给出优化建议</div>
+            </div>`;
+        chatInput.disabled = true;
+        chatInput.value = '';
+        sendBtn.disabled = true;
+        exportMdBtn.disabled = true;
+        exportOptimizedBtn.disabled = true;
+        exportPdfBtn.disabled = true;
+        clearBtn.disabled = true;
+        currentAiBubble = null;
+        currentAiRawText = '';
+    });
+</script>
+
+</body>
+</html>
