@@ -12,130 +12,82 @@ jobs:
       contents: read
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Get PR diff
-        id: diff
-        shell: bash
+      - name: Get diff and trigger review
+        id: review
         run: |
           git fetch origin "${{ github.event.pull_request.base.ref }}"
           git fetch origin "${{ github.event.pull_request.head.ref }}"
-          DIFF=$(git diff "origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }}" | head -c 50000)
-          echo "diff_length=$(echo "$DIFF" | wc -c)" >> $GITHUB_OUTPUT
-
-      - name: Trigger AI Review
-        id: review
-        shell: bash
-        run: |
-          DIFF=$(git diff "origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }}" | head -c 50000)
-          # Base64 encode diff to avoid JSON escaping issues
-          DIFF_B64=$(echo "$DIFF" | base64 -w 0)
-          RESPONSE=$(curl -s -X POST "${{ secrets.CR_PLATFORM_URL }}/api/tasks" \
-            -H "Content-Type: application/json" \
-            -d "{\"ruleSetId\":${{ secrets.CR_RULE_SET_ID }},\"diffContentB64\":\"$DIFF_B64\"}")
-          echo "Response: $RESPONSE"
-          TASK_ID=$(echo "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
-          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
-          echo "Review task created: #$TASK_ID"
+          $diff = git diff "origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }}"
+          if ($diff.Length -gt 50000) { $diff = $diff.Substring(0, 50000) }
+          $diffB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($diff))
+          $body = @{ruleSetId=${{ secrets.CR_RULE_SET_ID }};diffContentB64=$diffB64} | ConvertTo-Json -Compress
+          Write-Host "Sending review request..."
+          $resp = Invoke-RestMethod -Uri "${{ secrets.CR_PLATFORM_URL }}/api/tasks" -Method POST -Body $body -ContentType "application/json"
+          Write-Host "Task created: $($resp.data.id)"
+          "task_id=$($resp.data.id)" >> $env:GITHUB_OUTPUT
 
       - name: Wait for review
         id: wait
-        shell: bash
         run: |
-          TASK_ID=${{ steps.review.outputs.task_id }}
-          for i in $(seq 1 30); do
-            STATUS=$(curl -s "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$TASK_ID" | python -c "import sys,json; print(json.load(sys.stdin)['data']['status'])")
-            echo "Task $TASK_ID: $STATUS ($i/30)"
-            if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
-              echo "final_status=$STATUS" >> $GITHUB_OUTPUT
+          $taskId = "${{ steps.review.outputs.task_id }}"
+          for ($i=1; $i -le 30; $i++) {
+            $task = Invoke-RestMethod -Uri "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$taskId"
+            $status = $task.data.status
+            Write-Host "Task $taskId : $status ($i/30)"
+            if ($status -eq "completed" -or $status -eq "failed") {
+              "final_status=$status" >> $env:GITHUB_OUTPUT
               break
-            fi
-            sleep 10
-          done
-          echo "final_status=${STATUS:-timeout}" >> $GITHUB_OUTPUT
+            }
+            Start-Sleep 10
+          }
+          if (-not (Test-Path env:GITHUB_OUTPUT)) { "final_status=timeout" >> $env:GITHUB_OUTPUT }
+          else { "final_status=$status" >> $env:GITHUB_OUTPUT }
 
       - name: Post review comment
-        if: steps.wait.outputs.final_status == 'completed'
-        shell: bash
+        if: ${{ steps.wait.outputs.final_status == 'completed' }}
         run: |
-          TASK_ID=${{ steps.review.outputs.task_id }}
-          RESULTS=$(curl -s "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$TASK_ID/results")
+          $taskId = "${{ steps.review.outputs.task_id }}"
+          $results = Invoke-RestMethod -Uri "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$taskId/results"
+          $issues = $results.data
+          $comment = @()
 
-          python << PYEOF
-          import json
+          if ($issues.Count -eq 0) {
+            $comment += "## AI Code Review"
+            $comment += ""
+            $comment += "No issues found!"
+          } else {
+            $errors = ($issues | Where-Object { $_.severity -eq "error" }).Count
+            $warnings = ($issues | Where-Object { $_.severity -eq "warning" }).Count
+            $infos = ($issues | Where-Object { $_.severity -eq "info" }).Count
+            $comment += "## AI Code Review"
+            $comment += ""
+            $comment += "| Level | Count |"
+            $comment += "|-------|-------|"
+            $comment += "| Error | $errors |"
+            $comment += "| Warning | $warnings |"
+            $comment += "| Info | $infos |"
+            $comment += "| **Total** | **$($issues.Count)** |"
+            $comment += ""
 
-          resp = json.loads('''$RESULTS''')
-          results = resp.get('data', [])
+            foreach ($r in $issues) {
+              $comment += "### $($r.severity.ToUpper()): $($r.title)"
+              $comment += "**File**: ``$($r.filePath)``"
+              if ($r.lineNumber) { $comment += " **Line**: $($r.lineNumber)" }
+              if ($r.description) { $comment += ""; $comment += $r.description }
+              if ($r.suggestion) { $comment += ""; $comment += "> **Suggestion**: $($r.suggestion)" }
+              $comment += ""
+            }
+          }
 
-          if not results:
-              print("## AI Code Review\n\nNo issues found!")
-          else:
-              errors = sum(1 for r in results if r['severity'] == 'error')
-              warnings = sum(1 for r in results if r['severity'] == 'warning')
-              infos = sum(1 for r in results if r['severity'] == 'info')
-
-              lines = [
-                  "## AI Code Review",
-                  "",
-                  f"| Level | Count |",
-                  f"|-------|-------|",
-                  f"| Error | {errors} |",
-                  f"| Warning | {warnings} |",
-                  f"| Info | {infos} |",
-                  f"| **Total** | **{len(results)}** |",
-                  "",
-              ]
-
-              for r in results:
-                  emoji = {"error": "Error", "warning": "Warning", "info": "Info"}.get(r['severity'], "Info")
-                  lines.append(f"### {emoji}: {r.get('title','Issue')}")
-                  lines.append(f"**File**: `{r.get('filePath','unknown')}`")
-                  if r.get('lineNumber'):
-                      lines.append(f" **Line**: {r['lineNumber']}")
-                  if r.get('description'):
-                      lines.append(f"\n{r['description']}")
-                  if r.get('suggestion'):
-                      lines.append(f"\n> **Suggestion**: {r['suggestion']}")
-                  lines.append("")
-
-              print("\n".join(lines))
-          PYEOF
-
-          # Save to file
-          python -c "
-          import json
-          resp = json.loads('''$RESULTS''')
-          results = resp.get('data', [])
-          if not results:
-              with open('comment.md','w') as f: f.write('## AI Code Review\\n\\nNo issues found!')
-          else:
-              errors = sum(1 for r in results if r['severity'] == 'error')
-              warnings = sum(1 for r in results if r['severity'] == 'warning')
-              infos = sum(1 for r in results if r['severity'] == 'info')
-              with open('comment.md','w') as f:
-                  f.write('## AI Code Review\\n\\n')
-                  f.write(f'| Level | Count |\\n|-------|-------|\\n')
-                  f.write(f'| Error | {errors} |\\n| Warning | {warnings} |\\n| Info | {infos} |\\n')
-                  f.write(f'| **Total** | **{len(results)}** |\\n\\n')
-                  for r in results:
-                      f.write(f'### {r[\"severity\"].upper()}: {r.get(\"title\",\"Issue\")}\\n')
-                      f.write(f'**File**: `{r.get(\"filePath\",\"unknown\")}`')
-                      if r.get('lineNumber'): f.write(f' **Line**: {r[\"lineNumber\"]}')
-                      f.write('\\n')
-                      if r.get('description'): f.write(f'\\n{r[\"description\"]}\\n')
-                      if r.get('suggestion'): f.write(f'\\n> **Suggestion**: {r[\"suggestion\"]}\\n')
-                      f.write('\\n')
-          "
-
+          $comment -join "`n" | Out-File comment.md -Encoding UTF8
           gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Notify failure
         if: failure()
-        shell: bash
-        run: |
-          echo "AI Code Review failed. Check logs for details."
+        run: Write-Host "AI Code Review failed. Check run details."
