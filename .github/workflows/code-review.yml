@@ -19,35 +19,36 @@ jobs:
 
       - name: Get PR diff
         id: diff
+        shell: bash
         run: |
           git fetch origin "${{ github.event.pull_request.base.ref }}"
           git fetch origin "${{ github.event.pull_request.head.ref }}"
           DIFF=$(git diff "origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }}" | head -c 50000)
-          # Escape for JSON
-          DIFF_ESCAPED=$(echo "$DIFF" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
-          echo "diff=$DIFF_ESCAPED" >> $GITHUB_OUTPUT
           echo "diff_length=$(echo "$DIFF" | wc -c)" >> $GITHUB_OUTPUT
 
       - name: Trigger AI Review
         id: review
+        shell: bash
         run: |
-          echo "Diff length: ${{ steps.diff.outputs.diff_length }} bytes"
-
+          DIFF=$(git diff "origin/${{ github.event.pull_request.base.ref }}...origin/${{ github.event.pull_request.head.ref }}" | head -c 50000)
+          # Base64 encode diff to avoid JSON escaping issues
+          DIFF_B64=$(echo "$DIFF" | base64 -w 0)
           RESPONSE=$(curl -s -X POST "${{ secrets.CR_PLATFORM_URL }}/api/tasks" \
             -H "Content-Type: application/json" \
-            -d "{\"ruleSetId\":${{ secrets.CR_RULE_SET_ID }},\"diffContent\":${{ steps.diff.outputs.diff}}}")
-
-          TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
+            -d "{\"ruleSetId\":${{ secrets.CR_RULE_SET_ID }},\"diffContentB64\":\"$DIFF_B64\"}")
+          echo "Response: $RESPONSE"
+          TASK_ID=$(echo "$RESPONSE" | python -c "import sys,json; print(json.load(sys.stdin)['data']['id'])")
           echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
           echo "Review task created: #$TASK_ID"
 
       - name: Wait for review
+        id: wait
+        shell: bash
         run: |
           TASK_ID=${{ steps.review.outputs.task_id }}
-          MAX_WAIT=30
-          for i in $(seq 1 $MAX_WAIT); do
-            STATUS=$(curl -s "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$TASK_ID" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['status'])")
-            echo "Task $TASK_ID status: $STATUS (attempt $i/$MAX_WAIT)"
+          for i in $(seq 1 30); do
+            STATUS=$(curl -s "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$TASK_ID" | python -c "import sys,json; print(json.load(sys.stdin)['data']['status'])")
+            echo "Task $TASK_ID: $STATUS ($i/30)"
             if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
               echo "final_status=$STATUS" >> $GITHUB_OUTPUT
               break
@@ -57,55 +58,84 @@ jobs:
           echo "final_status=${STATUS:-timeout}" >> $GITHUB_OUTPUT
 
       - name: Post review comment
-        if: steps.review.outputs.task_id != ''
+        if: steps.wait.outputs.final_status == 'completed'
+        shell: bash
         run: |
           TASK_ID=${{ steps.review.outputs.task_id }}
           RESULTS=$(curl -s "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$TASK_ID/results")
 
-          # Build comment body
-          COMMENT=$(python3 << EOF
-          import json, sys
+          python << PYEOF
+          import json
 
           resp = json.loads('''$RESULTS''')
           results = resp.get('data', [])
 
           if not results:
-              print("## 🤖 AI Code Review\n\n✅ **未发现问题**，代码审查通过！")
-              sys.exit(0)
+              print("## AI Code Review\n\nNo issues found!")
+          else:
+              errors = sum(1 for r in results if r['severity'] == 'error')
+              warnings = sum(1 for r in results if r['severity'] == 'warning')
+              infos = sum(1 for r in results if r['severity'] == 'info')
 
-          errors = sum(1 for r in results if r['severity'] == 'error')
-          warnings = sum(1 for r in results if r['severity'] == 'warning')
-          infos = sum(1 for r in results if r['severity'] == 'info')
+              lines = [
+                  "## AI Code Review",
+                  "",
+                  f"| Level | Count |",
+                  f"|-------|-------|",
+                  f"| Error | {errors} |",
+                  f"| Warning | {warnings} |",
+                  f"| Info | {infos} |",
+                  f"| **Total** | **{len(results)}** |",
+                  "",
+              ]
 
-          body = [
-              "## 🤖 AI Code Review",
-              "",
-              f"| 级别 | 数量 |",
-              f"|------|------|",
-              f"| 🔴 Error | {errors} |",
-              f"| 🟡 Warning | {warnings} |",
-              f"| 🔵 Info | {infos} |",
-              f"| **总计** | **{len(results)}** |",
-              "",
-          ]
+              for r in results:
+                  emoji = {"error": "Error", "warning": "Warning", "info": "Info"}.get(r['severity'], "Info")
+                  lines.append(f"### {emoji}: {r.get('title','Issue')}")
+                  lines.append(f"**File**: `{r.get('filePath','unknown')}`")
+                  if r.get('lineNumber'):
+                      lines.append(f" **Line**: {r['lineNumber']}")
+                  if r.get('description'):
+                      lines.append(f"\n{r['description']}")
+                  if r.get('suggestion'):
+                      lines.append(f"\n> **Suggestion**: {r['suggestion']}")
+                  lines.append("")
 
-          for r in results:
-              emoji = {"error": "🔴", "warning": "🟡", "info": "🔵"}.get(r['severity'], "⚪")
-              body.append(f"### {emoji} {r.get('title','Issue')}")
-              body.append(f"**文件**: `{r.get('filePath','unknown')}`")
-              if r.get('lineNumber'):
-                  body.append(f" **行号**: {r['lineNumber']}")
-              if r.get('description'):
-                  body.append(f"\n{r['description']}")
-              if r.get('suggestion'):
-                  body.append(f"\n> 💡 **建议**: {r['suggestion']}")
-              body.append("")
+              print("\n".join(lines))
+          PYEOF
 
-          print("\n".join(body))
-          EOF
-          )
+          # Save to file
+          python -c "
+          import json
+          resp = json.loads('''$RESULTS''')
+          results = resp.get('data', [])
+          if not results:
+              with open('comment.md','w') as f: f.write('## AI Code Review\\n\\nNo issues found!')
+          else:
+              errors = sum(1 for r in results if r['severity'] == 'error')
+              warnings = sum(1 for r in results if r['severity'] == 'warning')
+              infos = sum(1 for r in results if r['severity'] == 'info')
+              with open('comment.md','w') as f:
+                  f.write('## AI Code Review\\n\\n')
+                  f.write(f'| Level | Count |\\n|-------|-------|\\n')
+                  f.write(f'| Error | {errors} |\\n| Warning | {warnings} |\\n| Info | {infos} |\\n')
+                  f.write(f'| **Total** | **{len(results)}** |\\n\\n')
+                  for r in results:
+                      f.write(f'### {r[\"severity\"].upper()}: {r.get(\"title\",\"Issue\")}\\n')
+                      f.write(f'**File**: `{r.get(\"filePath\",\"unknown\")}`')
+                      if r.get('lineNumber'): f.write(f' **Line**: {r[\"lineNumber\"]}')
+                      f.write('\\n')
+                      if r.get('description'): f.write(f'\\n{r[\"description\"]}\\n')
+                      if r.get('suggestion'): f.write(f'\\n> **Suggestion**: {r[\"suggestion\"]}\\n')
+                      f.write('\\n')
+          "
 
-          # Post comment to PR
-          echo "$COMMENT" | gh pr comment "${{ github.event.pull_request.number }}" -F -
+          gh pr comment "${{ github.event.pull_request.number }}" --body-file comment.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "AI Code Review failed. Check logs for details."
