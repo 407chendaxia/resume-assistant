@@ -3,11 +3,8 @@ package com.resume.assistant.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
-
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 
 /**
  * PDF 导出服务 —— 将 Markdown 简历转换为排版精美的 PDF
