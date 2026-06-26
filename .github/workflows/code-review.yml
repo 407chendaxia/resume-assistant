@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+defaults:
+  run:
+    shell: pwsh
+
 jobs:
   ai-review:
     runs-on: self-hosted
@@ -44,11 +48,10 @@ jobs:
             }
             Start-Sleep 10
           }
-          if (-not (Test-Path env:GITHUB_OUTPUT)) { "final_status=timeout" >> $env:GITHUB_OUTPUT }
-          else { "final_status=$status" >> $env:GITHUB_OUTPUT }
+          "final_status=$status" >> $env:GITHUB_OUTPUT
 
       - name: Post review comment
-        if: ${{ steps.wait.outputs.final_status == 'completed' }}
+        if: steps.wait.outputs.final_status == 'completed'
         run: |
           $taskId = "${{ steps.review.outputs.task_id }}"
           $results = Invoke-RestMethod -Uri "${{ secrets.CR_PLATFORM_URL }}/api/tasks/$taskId/results"
