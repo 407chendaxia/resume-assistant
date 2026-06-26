@@ -64,31 +64,6 @@ public final class ResumePromptTemplates {
             """;
 
     /**
-     * 模块优化 Prompt —— 针对具体模块进行深度优化
-     */
-    public static final String MODULE_OPTIMIZE_TEMPLATE = """
-            用户希望你针对简历中下面这个模块进行优化。
-
-            ## 当前简历全文（供上下文参考）
-            {resumeText}
-
-            ## 用户指定的优化模块
-            {moduleName}
-
-            ## 优化要求
-            1. 先用一句话肯定该模块的亮点
-            2. 指出 2-3 条具体改进点
-            3. 逐条给出优化后的版本，用 "优化前 / 优化后" 对比展示
-            4. 必要时追问缺失的关键信息（如数据、背景）
-
-            优化原则：
-            - 遵循 STAR 法则（Situation → Task → Action → Result）
-            - 动词开头，避免弱动词（如"负责" → 改为"主导/推动/设计"）
-            - 每个成果尽量量化（% / 倍数 / 绝对值）
-            - 删除无意义的自我评价形容词（如"吃苦耐劳""性格开朗"）
-            """;
-
-    /**
      * 生成最终优化版简历 —— 整合对话中所有优化建议，输出完整简历
      */
     public static final String FINAL_RESUME_PROMPT = """
