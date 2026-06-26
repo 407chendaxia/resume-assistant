@@ -1,5 +1,6 @@
 package com.resume.assistant.model;
 
+
 import java.time.LocalDateTime;
 
 /**
