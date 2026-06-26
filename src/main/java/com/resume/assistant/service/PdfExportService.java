@@ -19,6 +19,96 @@ public class PdfExportService {
 
     private static final Logger log = LoggerFactory.getLogger(PdfExportService.class);
 
+    private static final String HTML_TEMPLATE = """
+            <!DOCTYPE html>
+            <html lang="zh-CN">
+            <head>
+            <meta charset="UTF-8">
+            <title>%s</title>
+            <style>
+                @page {
+                    size: A4;
+                    margin: 2cm 2.2cm;
+                    @bottom-center {
+                        content: "第 " counter(page) " 页";
+                        font-size: 9pt;
+                        color: #999;
+                        font-family: "Microsoft YaHei", "SimHei", sans-serif;
+                    }
+                }
+                body {
+                    font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif;
+                    font-size: 11pt;
+                    line-height: 1.7;
+                    color: #333;
+                }
+                h1 {
+                    text-align: center;
+                    font-size: 20pt;
+                    color: #1a1a2e;
+                    border-bottom: 2px solid #4f46e5;
+                    padding-bottom: 12px;
+                    margin-bottom: 8px;
+                }
+                h2 {
+                    font-size: 14pt;
+                    color: #4f46e5;
+                    border-left: 4px solid #4f46e5;
+                    padding-left: 10px;
+                    margin-top: 24px;
+                    margin-bottom: 10px;
+                }
+                h3 {
+                    font-size: 12pt;
+                    color: #333;
+                    margin-top: 14px;
+                    margin-bottom: 6px;
+                }
+                p { margin: 4px 0; }
+                ul, ol { padding-left: 22px; margin: 4px 0; }
+                li { margin: 2px 0; }
+                strong { color: #1a1a2e; }
+                table {
+                    width: 100%%;
+                    border-collapse: collapse;
+                    margin: 8px 0;
+                    font-size: 10pt;
+                }
+                th {
+                    background: #4f46e5;
+                    color: #fff;
+                    padding: 6px 10px;
+                    text-align: left;
+                }
+                td {
+                    padding: 5px 10px;
+                    border-bottom: 1px solid #e2e8f0;
+                }
+                blockquote {
+                    border-left: 3px solid #cbd5e1;
+                    padding-left: 12px;
+                    color: #64748b;
+                    margin: 8px 0;
+                }
+                .contact {
+                    text-align: center;
+                    font-size: 10pt;
+                    color: #666;
+                    margin-bottom: 16px;
+                }
+                hr {
+                    border: none;
+                    border-top: 1px solid #e2e8f0;
+                    margin: 16px 0;
+                }
+            </style>
+            </head>
+            <body>
+            %s
+            </body>
+            </html>
+            """;
+
     /**
      * 将简历内容（Markdown）渲染为 PDF 字节流
      */
@@ -46,98 +136,8 @@ public class PdfExportService {
      * 构建专业排版的 HTML 简历模板
      */
     private String buildHtml(String markdown, String title) {
-        // 将 Markdown 转为带样式的 HTML
         String bodyHtml = simpleMarkdownToHtml(markdown);
-
-        return """
-                <!DOCTYPE html>
-                <html lang="zh-CN">
-                <head>
-                <meta charset="UTF-8">
-                <title>%s</title>
-                <style>
-                    @page {
-                        size: A4;
-                        margin: 2cm 2.2cm;
-                        @bottom-center {
-                            content: "第 " counter(page) " 页";
-                            font-size: 9pt;
-                            color: #999;
-                            font-family: "Microsoft YaHei", "SimHei", sans-serif;
-                        }
-                    }
-                    body {
-                        font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif;
-                        font-size: 11pt;
-                        line-height: 1.7;
-                        color: #333;
-                    }
-                    h1 {
-                        text-align: center;
-                        font-size: 20pt;
-                        color: #1a1a2e;
-                        border-bottom: 2px solid #4f46e5;
-                        padding-bottom: 12px;
-                        margin-bottom: 8px;
-                    }
-                    h2 {
-                        font-size: 14pt;
-                        color: #4f46e5;
-                        border-left: 4px solid #4f46e5;
-                        padding-left: 10px;
-                        margin-top: 24px;
-                        margin-bottom: 10px;
-                    }
-                    h3 {
-                        font-size: 12pt;
-                        color: #333;
-                        margin-top: 14px;
-                        margin-bottom: 6px;
-                    }
-                    p { margin: 4px 0; }
-                    ul, ol { padding-left: 22px; margin: 4px 0; }
-                    li { margin: 2px 0; }
-                    strong { color: #1a1a2e; }
-                    table {
-                        width: 100%%;
-                        border-collapse: collapse;
-                        margin: 8px 0;
-                        font-size: 10pt;
-                    }
-                    th {
-                        background: #4f46e5;
-                        color: #fff;
-                        padding: 6px 10px;
-                        text-align: left;
-                    }
-                    td {
-                        padding: 5px 10px;
-                        border-bottom: 1px solid #e2e8f0;
-                    }
-                    blockquote {
-                        border-left: 3px solid #cbd5e1;
-                        padding-left: 12px;
-                        color: #64748b;
-                        margin: 8px 0;
-                    }
-                    .contact {
-                        text-align: center;
-                        font-size: 10pt;
-                        color: #666;
-                        margin-bottom: 16px;
-                    }
-                    hr {
-                        border: none;
-                        border-top: 1px solid #e2e8f0;
-                        margin: 16px 0;
-                    }
-                </style>
-                </head>
-                <body>
-                %s
-                </body>
-                </html>
-                """.formatted(title, bodyHtml);
+        return HTML_TEMPLATE.formatted(title, bodyHtml);
     }
 
     /**
